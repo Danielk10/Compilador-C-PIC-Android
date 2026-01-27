@@ -1,0 +1,164 @@
+/* gplink - GNU PIC Linker
+   Copyright (C) 2001, 2002, 2003, 2004, 2005
+   Craig Franklin
+
+   Copyright (C) 2015-2016 Molnár Károly
+
+   Experimental pagesel and banksel removal.
+   Copyright (C) 2017 Gonzalo Pérez de Olaguer Córdoba <salo@gpoc.es>
+
+   Experimental PCALLW removal.
+   Copyright (C) 2017 Gonzalo Pérez de Olaguer Córdoba <salo@gpoc.es>
+
+This file is part of gputils.
+
+gputils is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2, or (at your option)
+any later version.
+
+gputils is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with gputils; see the file COPYING.  If not, write to
+the Free Software Foundation, 59 Temple Place - Suite 330,
+Boston, MA 02111-1307, USA.  */
+
+#ifndef GPLINK_H
+#define GPLINK_H
+
+#define GPLINK_VERSION_STRING       ("gplink-" VERSION " #" @REVISION@ " (" __DATE__ ")")
+
+#define MAX_PATHS                   100
+
+enum outfile {
+  OUT_NORMAL,
+  OUT_SUPPRESS,
+  OUT_NAMED
+};
+
+typedef struct archivelist {
+  char               *name;
+  gp_archive_t       *archive;
+  struct archivelist *next;
+} archivelist_t;
+
+typedef struct srcfns {
+  struct srcfns *next;
+  char          *file_name;
+} srcfns_t;
+
+typedef struct source_context {
+  struct source_context  *prev;
+  char                   *name;
+  FILE                   *f;
+  unsigned int            line_number;
+  struct yy_buffer_state *yybuf;
+  gp_boolean              last_char_is_nl;  /* If the last read character is a newline. */
+} source_context_t;
+
+typedef struct ifdef {
+  struct ifdef *prev;
+  gp_boolean    is_true;
+  gp_boolean    in_else;
+} ifdef_t;
+
+typedef struct list_context {
+  struct list_context *prev;
+  char                *name;
+  gp_symbol_t         *symbol;
+  FILE                *f;
+  gp_boolean           missing_source;
+  unsigned int         line_number;
+} list_context_t;
+
+extern struct gplink_state {
+  gp_boolean       mplink_compatible;   /* MPLINK compatibility mode. */
+  char             start_date[80];      /* When gplink ran. */
+  enum formats     hex_format;          /* Format of the output. */
+  char            *paths[MAX_PATHS];    /* The list of include paths. */
+  int              num_paths;           /* Number of paths in the list. */
+  pic_processor_t  processor;
+  proc_class_t     class;
+  int              strict_level;        /* 0, 1 */
+
+  struct {
+    int          level;
+    gp_boolean   dead_sections;
+    gp_boolean   weak_symbols;
+    unsigned int pagesel;
+    unsigned int banksel;
+    gp_boolean   experimental_banksel;
+    gp_boolean   experimental_pagesel;
+    gp_boolean   experimental_pcallw;
+  } optimize;
+
+  enum outfile
+    cod_file,                           /* Symbol output file control. */
+    hex_file,                           /* Hex output file control. */
+    lst_file,                           /* List output file control. */
+    map_file,                           /* Map output file control. */
+    obj_file;                           /* Executable object file control. */
+
+  gp_boolean     fill_enable;           /* Fill unused program memory with value. */
+  unsigned int   fill_value;            /* Value to fill program memory with. */
+  gp_boolean     has_stack;             /* Has stack directive in linker script. */
+  unsigned int   stack_size;            /* Value to fill program memory with. */
+  gp_boolean     has_idata;             /* Has initialized data memory. */
+  srcfns_t      *src_file_names;        /* List of script file names. */
+  srcfns_t      *src_file_names_tail;   /* List tail of script file names. */
+
+  char base_file_name[BUFSIZ],          /* Basename for generating hex,list,symbol filenames. */
+    cod_file_name[BUFSIZ],              /* Symbol (.cod) file name. */
+    hex_file_name[BUFSIZ],              /* Hex (.hex) file name. */
+    lst_file_name[BUFSIZ],              /* Symbol (.lst) file name. */
+    map_file_name[BUFSIZ],              /* List (.map) file name. */
+    obj_file_name[BUFSIZ];              /* Object (.o) file name. */
+
+  source_context_t *src;                /* Top of the stack of the script files. */
+  ifdef_t          *ifdef;              /* Top of the stack of ifdef nesting. */
+  symbol_table_t   *script_symbols;
+
+  struct {                              /* Map file state: */
+    FILE *f;                            /*   Map file output. */
+  } map;
+
+  struct {                              /* Symbol file state: */
+    FILE       *f;                      /*   Symbol file output. */
+    gp_boolean  enabled;                /*   Symbol file is enabled. */
+    gp_boolean  emitting;               /*   Flag indicating when an opcode is emitted. */
+    gp_boolean  no_save_local;          /*   Disable saving the local symbols. */
+  } cod;
+
+  struct {                              /* List file state: */
+    FILE           *f;                  /*   List file output. */
+    gp_boolean      enabled;            /*   List file is enabled. */
+    list_context_t *src;                /*   List file context. */
+    unsigned int    was_byte_addr;      /*   Last address that generated code. */
+  } lst;
+
+  struct {
+    symbol_table_t *definition;         /* Section definitions from script. */
+    symbol_table_t *logical;            /* Logical definitions from script. */
+  } section;
+
+  struct {
+    symbol_table_t *extern_global;      /* External and global symbol definition. */
+    symbol_table_t *local;              /* Local symbol definition. */
+    symbol_table_t *missing;            /* Missing external symbols. */
+    symbol_table_t *archive;            /* Archive symbol index. */
+  } symbol;
+
+  archivelist_t    *archives;
+  archivelist_t    *archives_tail;
+  gp_object_t      *object;             /* Object files. */
+  MemBlock_t       *i_memory;           /* Instruction memory linked list. */
+} state;
+
+extern void gplink_open_coff(const char *Name);
+extern void gplink_add_path(const char *Path);
+
+#endif

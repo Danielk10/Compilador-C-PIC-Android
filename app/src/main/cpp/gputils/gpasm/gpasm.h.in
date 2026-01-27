@@ -1,0 +1,462 @@
+/* Common definitions for gpasm
+   Copyright (C) 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005
+   James Bowman, Craig Franklin
+
+   Increased size of struct gpasm_state.obj.new_sect_name (80 -> 200).
+   (SDCC sometimes creates quite long names).
+   Copyright (C) 2019 Gonzalo Pérez de Olaguer Córdoba <salo@gpoc.es>
+
+This file is part of gputils.
+
+gputils is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2, or (at your option)
+any later version.
+
+gputils is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with gputils; see the file COPYING.  If not, write to
+the Free Software Foundation, 59 Temple Place - Suite 330,
+Boston, MA 02111-1307, USA.  */
+
+#ifndef __GPASM_H__
+#define __GPASM_H__
+
+#define GPASM_VERSION_STRING        ("gpasm-" VERSION " #" @REVISION@ " (" __DATE__ ")")
+
+/* This symbol will get placed into the symbol table for the 16bit cores
+   and thus allow compile-time selection of the proper macro set. */
+#define __16bit_core_               "__16bit_core_"
+
+#define __ACTIVE_BANK_ADDR          "__ACTIVE_BANK_ADDR"
+#define __BANK_INV                  -1
+
+#define __ASSUMED_BANK_ADDR         "__ASSUMED_BANK_ADDR"
+
+#define __ACTIVE_PAGE_ADDR          "__ACTIVE_PAGE_ADDR"
+#define __PAGE_INV                  -1
+
+#define WHILE_LOOP_COUNT_MAX        255
+
+#define STRCMP(s1, s2)              ((state.case_insensitive) ? strcasecmp((s1), (s2)) : strcmp((s1), (s2)))
+
+#define MAX_PATHS                   100
+
+#define IN_MACRO_WHILE_DEFINITION   state.mac_prev != NULL
+#define IN_WHILE_DEFINITION         IN_MACRO_WHILE_DEFINITION && (state.while_head != NULL)
+#define IN_MACRO_EXPANSION          state.src_list.last->type == SRC_MACRO
+#define IN_WHILE_EXPANSION          state.src_list.last->type == SRC_WHILE
+#define IN_FILE_EXPANSION           state.src_list.last->type == SRC_FILE
+
+enum gpasmValTypes {
+  VAL_CONSTANT,
+  VAL_VARIABLE,
+  VAL_EXTERNAL,
+  VAL_GLOBAL,
+  VAL_CBLOCK,
+  VAL_STATIC,
+  VAL_ADDRESS,
+  VAL_ABSOLUTE,
+  VAL_DEBUG
+};
+
+enum state_types {
+  STATE_NOCHANGE,
+  STATE_EXITMACRO,
+  STATE_INCLUDE,
+  STATE_MACRO,
+  STATE_SECTION,
+  STATE_SUBSTITUTION,
+  STATE_WHILE
+};
+
+enum out_file {
+  OUT_NORMAL,
+  OUT_SUPPRESS,
+  OUT_NAMED
+};
+
+enum file_types {
+  FT_SRC,
+  FT_OTHER
+};
+
+enum gpasm_modes {
+  MODE_ABSOLUTE,
+  MODE_RELOCATABLE
+};
+
+/************************************************************************/
+
+typedef struct src_line {
+  char   *line;                         /* Source line. */
+  size_t  size;                         /* Source line allocated size. */
+} src_line_t;
+
+typedef struct conf_mem_block {
+  int                    addr;
+  MemBlock_t            *m;
+  gp_boolean             new_config;
+  gp_symbol_t           *file_symbol;
+  unsigned int           line_number;
+  struct conf_mem_block *next;
+} conf_mem_block_t;
+
+/************************************************************************/
+
+/* file_context: A structure to keep track of all files that have been opened.
+                 Used to create the list of project files that can be found
+                 in the .cod file. */
+
+typedef struct file_context {
+  /* This always should be the first item! (libgputils/gplist.c) */
+  GPNodeHeader(struct file_context);
+
+  char                *name;            /* file name */
+  unsigned int         id;              /* Unique identifier. */
+  enum file_types      ft;              /* allowed file types */
+} file_context_t;
+
+typedef struct file_context_list {
+  /* head of file contexts
+   * tail of file contexts
+   * number of file contexts */
+  GPListHeader(file_context_t);
+} file_context_list_t;
+
+typedef struct macro_body {
+  char              *src_line;          /* Original source line - for listing. */
+  struct macro_body *next;              /* Next line in listing. */
+} macro_body_t;
+
+typedef struct macro_head {
+  int           pass;                   /* Pass in which macro was defined: 1 or 2 */
+  pnode_t      *parms;
+  macro_body_t *body;
+  gp_boolean    defined;                /* 1 macro has been defined so calls are valid */
+  char         *src_name;
+  unsigned int  line_number;
+  gp_symbol_t  *file_symbol;
+} macro_head_t;
+
+typedef struct amode {
+  enum {
+    IN_THEN,
+    IN_ELIF,
+    IN_ELSE
+  } mode;
+
+  gp_boolean    enabled;                /* Are we currently enabled? */
+  gp_boolean    before_else_enabled;    /* This true if before else branch was an another enabled branch. */
+  gp_boolean    upper_enabled;
+  struct amode *upper;
+} amode_t;
+
+enum src_types {
+  SRC_UNKNOWN,
+  SRC_FILE,
+  SRC_MACRO,
+  SRC_WHILE
+};
+
+typedef struct source_context {
+  /* This always should be the first item! (libgputils/gplist.c) */
+  GPNodeHeader(struct source_context);
+
+  char                   *name;
+  enum src_types          type;
+  FILE                   *f;
+  struct macro_head      *mac_head;
+  struct macro_body      *mac_body;         /* Macro line to parse. */
+  struct yy_buffer_state *yybuf;
+  unsigned int            line_number;
+  unsigned int            loop_number;      /* Loop number for while loops. */
+  gp_symbol_t            *file_symbol;
+  file_context_t         *fc;               /* Position in the file context stack. */
+  struct amode           *astack;           /* Stack of amodes when a macro was called. */
+  gp_boolean              last_char_is_nl;  /* If the last read character is a newline. */
+  src_line_t              curr_src_line;    /* Current source line. */
+} source_context_t;
+
+typedef struct source_context_list {
+  /* head of source contexts
+   * tail of source contexts
+   * number of source contexts */
+  GPListHeader(source_context_t);
+} source_context_list_t;
+
+/************************************************************************/
+
+extern struct gpasm_state {
+  enum gpasm_modes  mode;
+  gp_boolean        mpasm_compatible;   /* MPASMX compatibility mode. */
+  gp_boolean        extended_pic16e;
+  int               radix;
+  enum formats      hex_format;
+  gp_boolean        case_insensitive;
+  gp_boolean        show_full_addr;
+  gp_boolean        quiet;
+  gp_boolean        use_absolute_path;
+  gp_boolean        debug_info;         /* Use debug directives for coff outputs. */
+  int               error_level;        /* 0, 1, 2 */
+  int               strict_level;       /* 0, 1, 2 */
+  int               num_paths;          /* Number of paths in the list. */
+  char             *paths[MAX_PATHS];   /* The list of include paths. */
+
+  struct {                              /* Command line override flags. */
+    gp_boolean radix;                   /* Values is specified by the command line. */
+    gp_boolean hex_format;
+    gp_boolean error_level;
+    gp_boolean strict_level;
+    gp_boolean macro_expand;
+    gp_boolean processor;
+    gp_boolean lst_force;
+  } cmd_line;
+
+  int pass;                             /* 1 or 2 */
+  unsigned int   byte_addr;             /* Current code-generation point. */
+  gp_boolean     dos_newlines;          /* Use DOS newlines in hex file. */
+  gp_boolean     memory_dump;           /* Dump instruction memory to standard output. */
+  gp_boolean     found_config;          /* Config directive in source code. */
+  gp_boolean     found_devid;           /* Config directive in source code. */
+  gp_boolean     found_idlocs;          /* Idlocs directive in source code. */
+  gp_boolean     found_end;             /* End directive in source code. */
+  int            maxram;                /* Highest legal data memory location. */
+  int            maxrom;                /* Highest legal program memory location. */
+  gp_bit_array_t badrom;                /* Nonzero indicates illegal memory. */
+
+  enum out_file
+       cod_file,                        /* Symbol output file control. */
+       dep_file,                        /* Dependency output file control. */
+       err_file,                        /* Error output file control. */
+       hex_file,                        /* Hex output file control. */
+       lst_file,                        /* List output file control. */
+       obj_file;                        /* Relocatable object file control. */
+
+  struct {                              /* Totals for errors, warnings, messages. */
+    int errors;
+    int warnings;
+    int messages;
+    int warnings_suppressed;
+    int messages_suppressed;
+  } num;
+
+  pic_processor_t processor;
+  gp_boolean      processor_chosen;     /* Nonzero after processor-specific init. */
+
+  struct {                              /* Processor data. */
+    proc_class_t class;                 /* Processor class. */
+    int          id_location;           /* address of last __idlocs */
+    int          bsr_boundary;          /* 18xx bsr boundary location */
+  } device;
+
+  uint8_t badram[MAX_RAM];              /* Nonzero indicates illegal memory. */
+  symbol_table_t
+    *stBuiltin,                         /* Built-ins: instructions, pseudo-ops */
+    *stDirective,                       /* bottom half of Builtin with directives */
+    *stGlobal,                          /* Global symbols. */
+    *stTop,                             /* Top of locals stack (stGlobal is base). */
+    *stDefines,                         /* Preprocessor #defines */
+    *stMacroParams,                     /* Macro #defines (stDefines is base). */
+    *stMacros;                          /* Macros */
+
+  MemBlock_t       *i_memory;           /* Instruction memory linked list. */
+  MemBlock_t       *c_memory;           /* Configuration memory linked list. */
+  conf_mem_block_t *conf_sec_mem;       /* Head of configuration section memory linked list. */
+  conf_mem_block_t *conf_sec_mem_last;  /* Tail of configuration section memory linked list. */
+
+  char *src_file_name,                  /* Source (.asm) file name. */
+        base_file_name[BUFSIZ],         /* Basename for generating hex,list,symbol filenames. */
+        cod_file_name[BUFSIZ],          /* Symbol (.cod) file name. */
+        dep_file_name[BUFSIZ],          /* Dependency (.d) file name. */
+        err_file_name[BUFSIZ],          /* Error - messages - (.err) file name. */
+        lst_file_name[BUFSIZ],          /* List (.lst) file name. */
+        obj_file_name[BUFSIZ];          /* Object (.o) file name. */
+
+  struct {                              /* Symbol file state: */
+    FILE         *f;                    /*   Symbol file output. */
+    gp_boolean    enabled;              /*   True if symbol file is enabled. */
+    unsigned int  emitting;             /*   Flag indicating when an opcode is emitted. */
+  } cod;
+
+  struct {                              /* Dep file state: */
+    FILE       *f;                      /*   Dep file output. */
+    gp_boolean  enabled;                /*   True if dep file is enabled. */
+  } dep;
+
+  struct {                              /* Error file state: */
+    FILE       *f;                      /*   Error file output. */
+    gp_boolean  enabled;                /*   True if err file is enabled. */
+  } err;
+
+  struct {                              /* List file state: */
+    FILE *f;                            /*   List file output. */
+    unsigned int
+      line_of_page,                     /*   What line are we at within the page. */
+      page,                             /*   What page are we at. */
+      lines_per_page,                   /*   Lines per page. */
+      line_number;                      /*   What line are we at within the file. */
+
+    gp_boolean
+      memory_map,                       /*   Memory Map dump enabled. */
+      symbol_table;                     /*   Symbol table dump enabled. */
+
+    enum {
+      LST_IN_NONE,
+      LST_IN_MEM,
+      LST_IN_SYMTAB,
+      LST_IN_MAP
+    } lst_state;                        /*   Listing state. */
+
+    struct {
+      unsigned int was_byte_addr;       /*   Value of state.byte_addr at start of line. */
+                                        /*   What kind of line was it? */
+      enum {
+        LTY_NONE,                       /*     Nothing - blank line */
+        LTY_ORG,                        /*     ORG pseudo-op */
+        LTY_DIR,                        /*     Directive, non-code generating. */
+        LTY_IDLOCS,                     /*     ID locations for 12 and 14 bit cores. */
+        LTY_INSN,                       /*     Some other instruction or pseudo. */
+        LTY_EQU,                        /*     An equate. */
+        LTY_DATA,                       /*     Data. */
+        LTY_RES,                        /*     Reserve memory. */
+        LTY_SEC,                        /*     new coff section */
+        LTY_SET,                        /*     A SET or '=' */
+        LTY_SET4,                       /*     A 2 byte variable, constant or local. */
+        LTY_CONFIG,                     /*     A __config line. */
+        LTY_NOLIST_DIR,                 /*     Don't list the directive (ENDW). */
+        LTY_DOLIST_DIR                  /*     Force list the directive (WHILE). */
+      } linetype;
+    } line;
+
+    char       start_date[80];          /*   When assembly started. */
+    gp_boolean enabled;                 /*   listing is enabled */
+    gp_boolean expand;                  /*   macro listings are expanded */
+    gp_boolean force;                   /*   ignoring nolist directives */
+    int        config_address;          /*   list config address for 16 bit devices */
+    char       title_name[80];          /*   given in TITLE directive */
+    char       subtitle_name[80];       /*   given in SUBTITLE directive */
+    int        tabstop;                 /*   tab-stop distance */
+    int        line_width;              /*   listing line width - list c=xxx option */
+    gpasmVal   cblock_lst;              /*   cblock constant for listing */
+  } lst;
+
+  struct {                              /* Preprocessor emit state: */
+    char       *preproc_file_name;      /*   preprocessor output file name */
+    FILE       *f;                      /*   preprocessor file pointer */
+    gp_boolean  do_emit;                /*   emit current preprocessed asm line */
+    src_line_t  curr_src_line;          /*  current preprocessed source line */
+  } preproc;
+
+  struct {                              /* Object file state: */
+    gp_object_t  *object;               /*   Object file. */
+    gp_section_t *section;              /*   Current section. */
+    int           section_num;          /*   Current section number. */
+    gp_boolean    enabled;              /*   True if object file is enabled. */
+    char          new_sect_name[200];   /*   new section name */
+    unsigned int  new_sect_addr;        /*   new section adress */
+    unsigned int  new_sect_flags;       /*   new section flags */
+    unsigned int  symbol_num;           /*   Current symbol number. */
+    unsigned int  flags;                /*   Current section flags. */
+    gp_symbol_t  *debug_file;           /*   Debug information for high level langs. */
+    unsigned int  debug_line;
+    gp_boolean    newcoff;
+  } obj;
+
+  source_context_list_t  src_list;      /* The stack of source files. */
+
+  file_context_list_t    file_list;     /* The stack of all files. */
+
+  struct amode          *astack;        /* Stack of amodes (macros, etc). */
+  gpasmVal               cblock;        /* cblock constant */
+  gp_boolean             cblock_defined;
+  struct macro_head     *mac_head;      /* Starting a macro... */
+  struct macro_body    **mac_prev;      /* Stitching ptr. */
+  struct macro_body     *mac_body;      /* While we're building a macro. */
+  struct macro_head     *while_head;    /* WHILEs work a lot like macros... */
+  unsigned int           while_depth;   /* WHILE nesting depth, used in WHILE definition. */
+  enum state_types       next_state;
+  gp_boolean             skipped_inst;  /* Instruction execution depends on the previous one (after btfsc etc.). */
+  gp_boolean             macro_dereference;  /* Use the source from where the macro was invoked for errors. */
+
+  union {
+    char              *file;
+    struct macro_head *macro;
+  } next_buffer;
+} state;
+
+#define VATRR_PROC_DEPENDENT    (1 << 0)  /* Depend on the type of processor. */
+#define VATRR_HAS_NO_VALUE      (1 << 1)  /* The variable has no value. */
+
+typedef struct variable {
+  gpasmVal            value;
+  enum gpasmValTypes  type;
+  enum gpasmValTypes  previous_type;    /* Can change from static to global. */
+  unsigned int        coff_section_num;
+  unsigned int        coff_section_flags;
+  unsigned int        coff_symbol_num;
+  unsigned int        flags;            /* VATRR_... */
+} variable_t;
+
+/************************************************************************/
+
+extern void yyerror(const char *String);
+
+/* gpasm.c */
+extern void add_path(const char *Path);
+
+/* util.c */
+typedef enum numstring_types {
+  NUM_STR_UNKNOWN = 0,
+  NUM_STR_BIN,
+  NUM_STR_OCT,
+  NUM_STR_DEC,
+  NUM_STR_HEX
+} numstring_t;
+
+extern int string_to_int(const char *String, int Radix);
+extern long gp_strtol(const char *String, numstring_t *Type);
+extern gp_boolean find_hv_macro(const char *String, const char **Start, const char **End);
+extern int gpasm_magic(const char *);
+extern const char *convert_escape_chars(const char *Ps, int *Value);
+extern char *convert_escaped_char(char *Str, char Ch);
+extern void coerce_str1(pnode_t *Exp);
+extern gpasmVal do_or_append_insn(const char *Op, pnode_t *Parms);
+
+extern gp_boolean set_symbol_attr(int *Section_number, unsigned int *Class, enum gpasmValTypes Type);
+
+extern void set_global(const char *Name, gpasmVal Value, enum gpasmValTypes Type,
+                       gp_boolean Proc_dependent, gp_boolean Has_no_value);
+
+extern variable_t *get_global_constant(const char *Name);
+extern void delete_variable_symbols(symbol_table_t *Table);
+extern void delete_processor_variable_symbols(symbol_table_t *Table);
+extern void select_error_level(int Level);
+extern void select_strict_level(int Level);
+extern void select_expand(const char *Expand);
+extern void select_hex_format(const char *Format_name);
+extern void select_radix(const char *Name);
+extern char *macro_params_to_string(char *String, size_t String_max_length, size_t *Length, const pnode_t *Macro_params);
+extern const char *variable_type_to_str(enum gpasmValTypes Type);
+extern const char *value_type_to_str(const variable_t *Variable, gp_boolean Previous);
+extern const char *pnode_symbol_name(const pnode_t *Pnode);
+extern gpasmVal pnode_symbol_value(const pnode_t *Pnode);
+extern const char *pnode_string(const pnode_t *Pnode);
+extern void msg_has_no_value(const char *Optional_text, const char *Symbol_name);
+extern void macro_append(void);
+extern void hex_create(void);
+
+/* parse.y */
+extern pnode_t *mk_constant(int Value);
+extern pnode_t *mk_offset(pnode_t *Pnode);
+extern pnode_t *mk_symbol(const char *String);
+extern pnode_t *mk_string(char *String);
+extern pnode_t *mk_list(pnode_t *Head, pnode_t *Tail);
+extern pnode_t *mk_2op(int Op, pnode_t *Pnode0, pnode_t *Pnode1);
+extern pnode_t *mk_1op(int Op, pnode_t *Pnode);
+
+#endif

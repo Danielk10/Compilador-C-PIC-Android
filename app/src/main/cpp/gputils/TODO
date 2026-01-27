@@ -1,0 +1,18 @@
+This following list contains items that need to be completed. This 
+list is in no particular order.
+
+gputils
+  * Grep the source for FIXME and fix.
+  * Add a check for the version of flex.
+  * Use dejagnu for testing.
+
+gpasm
+  * Move opcode generator from /gpasm/directive.c to /libgputils/gpopcode.c.
+  * Undefined coff symbols are always at the end of the coff table.
+  * Add relocations for the difference between symbols in the same section.
+  * Allow multiple symbols with the same name in different sections of COFF asm files.
+
+gplink
+  * Peep-like optimization. Consider using pcode from sdcc-pic14.
+  * Partial linking.
+  * Use extended COD file types. (If once there will be documentation of COD file format.)
